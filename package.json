@@ -1,0 +1,45 @@
+{
+  "name": "pixel-buffer-diff-folders",
+  "description": "Pbd-folders ( Pixel Buffer Diff folders ) recursively diff folders of images using pixel buffer diff",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/p01/pixel-buffer-diff-folders.git"
+  },
+  "homepage": "https://github.com/p01/pixel-buffer-diff-folders#readme",
+  "author": "",
+  "bugs": {
+    "url": "https://github.com/p01/pixel-buffer-diff-folders/issues"
+  },
+  "keywords": [
+    "folders",
+    "recursive",
+    "image",
+    "comparison",
+    "diff",
+    "pixel buffer",
+    "pixel buffer diff",
+    "visual regression",
+    "pixelmatch",
+    "ressemble",
+    "png",
+    "jpg"
+  ],
+  "version": "1.0.0",
+  "scripts": {
+    "build": "tsc && terser ./dist/index.js -c -m --module  -o ./dist/index.js"
+  },
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "devDependencies": {
+    "@types/pixelmatch": "*",
+    "@types/node": "^12.18.3",
+    "fast-png": "5.0.4",
+    "fast-glob": "3.2.7",
+    "jpeg-js": "0.4.3",
+    "pixel-buffer-diff": "1.3.1",
+    "prettier": "^2.1.2",
+    "terser": "5.9.0",
+    "typescript": "4.4.3"
+  }
+}
