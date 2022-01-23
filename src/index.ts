@@ -1,66 +1,48 @@
-const {
-  Worker, isMainThread, parentPort
-} = require("worker_threads");
-
+const { Worker } = require("worker_threads");
+import { Changed, Error, DiffImageOptions, Report } from "./types";
+import { diffImage } from "./diffImageAsync";
 import * as fs from "fs";
-import * as fastGlob from "fast-glob";
-import { join, dirname } from "path";
-import { decode } from "jpeg-js";
-import { diff, Options, Result } from "pixel-buffer-diff";
-import * as fastPng from "fast-png";
+import { dirname, join, sep } from "path";
+import { Options } from "pixel-buffer-diff";
 import * as os from "os";
 
-export type Changed = { path: string } & Result;
+const listImagesInFolder = (path: string, pathAndSepLength: number = (path + sep).length): string[] => {
+  const foo: string[] = [];
+  const pathWithSep = path + sep;
+  const relPath = pathWithSep.slice(pathAndSepLength);
 
-type MessageToWorker = { path: string, baselineFolder: string, candidateFolder: string, diffFolder: string,
-  options: Options, sideBySide: boolean };
-
-
-export type Report = {
-  changed: Changed[];
-  unchanged: string[];
-  added: string[];
-  removed: string[];
-};
-
-const report: Report = {
-  changed: [],
-  unchanged: [],
-  added: [],
-  removed: [],
-};
-
-const getRGBABuffer = (imageData: ImageData): Uint8ClampedArray => {
-  const data = imageData.data;
-  const area = imageData.width * imageData.height;
-  const length = data.length;
-
-  if (length === area * 4) {
-    return imageData.data;
+  const dirents = fs.readdirSync(path, {withFileTypes: true });
+  for (const dirent of dirents) {
+    const name = dirent.name;
+    const lowerCaseExtenstion = name.slice(name.lastIndexOf(".") + 1).toLowerCase();
+    if (dirent.isDirectory()) {
+      foo.push.apply(foo, listImagesInFolder(join(path, name), pathAndSepLength));
+    } else if(dirent.isFile() && (lowerCaseExtenstion === "png" || lowerCaseExtenstion === "jpg" || lowerCaseExtenstion === "jpeg")) {
+      foo.push(relPath + name);
+    }
   }
 
-  const rgbaData = new Uint8ClampedArray(area * 4);
-  for (let i = 0, j = 0; i < length;) {
-    rgbaData[j++] = data[i++];
-    rgbaData[j++] = data[i++];
-    rgbaData[j++] = data[i++];
-    rgbaData[j++] = 255;
-  }
-  return rgbaData;
+  return foo;
 };
 
-export const diffFolders = async (baselineFolder: string, candidateFolder: string, diffFolder: string, options: Options, sideBySide: boolean = false) => {
+export const diffFolders = async (baselineFolder: string, candidateFolder: string, diffFolder: string,
+  options: Options, sideBySide: boolean, runAsync: boolean = false): Promise<Report> => {
+
   const timeStart = Date.now();
-  const pattern = "**/*.@(png|jpe?g)";
-  const baselineImageRelPaths = fastGlob.sync(pattern, { cwd: baselineFolder }).sort();
-  const candidateImageRelPaths = fastGlob.sync(pattern, { cwd: candidateFolder }).sort();
+  const report: Report = {
+    changed: [],
+    unchanged: [],
+    added: [],
+    removed: [],
+    error: []
+  };
+
+  const baselineImageRelPaths = listImagesInFolder(baselineFolder).sort();
+  const candidateImageRelPaths = listImagesInFolder(candidateFolder).sort();
   fs.mkdirSync(dirname(diffFolder), { recursive: true });
-
-
+ 
   const bil = baselineImageRelPaths.length;
   const cil = candidateImageRelPaths.length;
-
-  console.log(`${bil + cil} unique images: ${bil} baseline ⚡ ${cil} candidate`);
 
   // Go through the baseline and candidate image relPaths
   let bi = 0;
@@ -88,47 +70,70 @@ export const diffFolders = async (baselineFolder: string, candidateFolder: strin
     }
   }
 
-  console.log(
-    `${irpBoth.length * 2} images in common, ${report.removed.length
-    } images removed and ${report.added.length} images added`
-  );
+  const numOfCpus = os.cpus().length;
+  const numOfWorkers = runAsync ? Math.ceil(numOfCpus * .75) : 1;
 
-  let imageIndex = 0;
-  const diffNextImageAsync = async () => {
-    const worker = new Worker(__filename, { stdout: true });
+  console.log(`⚡ pixel-buffer-diff-folders
+${bil + cil} unique image relative paths
+${bil} baseline
+${cil} candidate
+-${report.removed.length}+${report.added.length}
+...diffing ${irpBoth.length * 2} common images using ${numOfWorkers} worker(s)`);
 
-    let path: string;
-    while (path = irpBoth[imageIndex++]) {
-      await new Promise((resolve) => {
-        worker.once("message", (msg?: Changed | {error: string}) => {
-          if (msg) {
-            if ("error" in msg) {
-              console.log(`** error ** ${msg.error}`);
-            } else {
-              report.changed.push(msg);
-            }
-          } else {
-            report.unchanged.push(path);
-          }
-          resolve(undefined);
-        });
-        // worker.on("error", reject);
+  if (numOfWorkers > 1) {
+    let imageIndex = 0;
+    const diffImageWorker = async () => {
+      const worker = new Worker("./diffImageAsync");
 
-        worker.postMessage({ path, baselineFolder, candidateFolder, diffFolder, options, sideBySide });
-      });
+      const diffImageOptions: DiffImageOptions = {
+        baselineFolder, candidateFolder, diffFolder,
+        options, sideBySide, path: ""
+      };
+
+      while (diffImageOptions.path = irpBoth[imageIndex++]) {
+        await new Promise((resolve) => {
+            worker.once("message", (changedOrError: Changed | Error) => {
+              if ("error" in changedOrError) {
+                report.error.push(changedOrError);
+              } else if (changedOrError.diff > 0) {
+                report.changed.push(changedOrError);
+              } else {
+                report.unchanged.push(changedOrError.path);
+              }
+      
+              resolve(undefined);
+            });
+
+            worker.postMessage(diffImageOptions);
+          });
+
+      };
+
+      worker.terminate();
+      return;
     };
 
-    worker.terminate();
-  };
+    const buckets = new Array(numOfWorkers).fill(1);
+    await Promise.all(buckets.map(diffImageWorker));
+  } else {
+    const diffImageOptions: DiffImageOptions = {
+      baselineFolder, candidateFolder, diffFolder,
+      options, sideBySide, path: ""
+    };
 
-  const buckets = [];
-  const numOfCpus = os.cpus().length;
-  const numOfWorkers = Math.ceil(numOfCpus * .75);
-  for (let i = 0; i < numOfWorkers; i++) {
-    buckets.push(diffNextImageAsync());
-  };
-  console.log(`... diffing ${irpBoth.length * 2} images in ${numOfWorkers} workers`);
-  await Promise.all(buckets);
+    for (let imageIndex = 0; imageIndex < irpBoth.length; imageIndex++) {
+      diffImageOptions.path = irpBoth[imageIndex];
+      const changedOrError = await diffImage(diffImageOptions);
+
+      if ("error" in changedOrError) {
+        report.error.push(changedOrError);
+      } else if (changedOrError.diff > 0) {
+        report.changed.push(changedOrError);
+      } else {
+        report.unchanged.push(diffImageOptions.path);
+      }
+    }
+  }
 
   const duration = Date.now() - timeStart;
   console.log(
@@ -137,70 +142,4 @@ export const diffFolders = async (baselineFolder: string, candidateFolder: strin
   );
 
   return report;
-}
-
-// Worker thread
-if (!isMainThread) {
-  (async () => {
-    const diffImage = (data: MessageToWorker) => {
-      const irp = data.path;
-      const { baselineFolder, candidateFolder, diffFolder, options, sideBySide } = data;
-      const isPNG = irp.endsWith(".png");
-      const decodeImage = isPNG ? fastPng.decode : decode;
-
-      const baselinePath = join(baselineFolder, irp);
-      const candidatePath = join(candidateFolder, irp);
-      const diffPath = join(diffFolder, irp);
-
-      const baselineImageBuffer = fs.readFileSync(baselinePath);
-      const candidateImageBuffer = fs.readFileSync(candidatePath);
-
-      const baselineImage = (decodeImage(
-        baselineImageBuffer
-      ) as unknown) as ImageData;
-      const candidateImage = (decodeImage(
-        candidateImageBuffer
-      ) as unknown) as ImageData;
-
-      // Check if we got RGB buffers instead of RGBA
-      const bidRGBA = getRGBABuffer(baselineImage);
-      const cidRGBA = getRGBABuffer(candidateImage);
-
-      const widthMultiplier = sideBySide ? 3 : 1;
-      const { width, height } = baselineImage;
-      const difxPng: ImageData = {
-        width: width * widthMultiplier,
-        height,
-        data: new Uint8ClampedArray(width * widthMultiplier * height * 4),
-      };
-
-      try {
-        const result = diff(bidRGBA, cidRGBA, difxPng.data, width, height, options);
-
-        if (result.diff === 0) {
-          parentPort.postMessage(undefined);
-        } else {
-          const change: Changed = Object.assign(result, { path: irp });
-
-          const pngBuffer = fastPng.encode(difxPng as fastPng.IImageData);
-
-          fs.mkdirSync(dirname(diffPath), { recursive: true });
-
-          fs.writeFileSync(diffPath, pngBuffer);
-
-          parentPort.postMessage(change);
-        }
-      } catch (err) {
-        console.log(err);
-        parentPort.postMessage({error: `${err}`});
-      }
-    };
-
-    return new Promise(() => {
-      parentPort.on("message", (data: MessageToWorker) => {
-        diffImage(data);
-      });
-    });
-
-  })();
 }
