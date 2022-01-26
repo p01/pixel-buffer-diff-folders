@@ -83,7 +83,7 @@ ${cil} candidate
   if (numOfWorkers > 1) {
     let imageIndex = 0;
     const diffImageWorker = async () => {
-      const worker = new Worker("./diffImageAsync");
+      const worker = new Worker("./diffImageAsync.js");
 
       const diffImageOptions: DiffImageOptions = {
         baselineFolder, candidateFolder, diffFolder,
