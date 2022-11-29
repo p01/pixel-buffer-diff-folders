@@ -10,7 +10,13 @@ const loadFileAndGetRGBAImageData = async (path: string): Promise<ImageData> => 
   const isPNG = path.endsWith(".png");
   const imageBuffer = await fs.promises.readFile(path);
   const decodeImage = (isPNG ? fastPng.decode : decode);
-  const imageData = decodeImage(imageBuffer) as ImageData;
+  const intermediaryDecodedData = decodeImage(imageBuffer);
+  const imageData = ({
+    width: intermediaryDecodedData.width, 
+    height: intermediaryDecodedData.height,
+    data: intermediaryDecodedData.data,
+    colorSpace: "srgb",
+  }) as ImageData;
 
   const data = imageData.data;
   const area = imageData.width * imageData.height;
@@ -50,6 +56,7 @@ export const diffImage = async (data: DiffImageOptions): Promise<Changed | Error
       width: width * widthMultiplier,
       height,
       data: new Uint8ClampedArray(width * widthMultiplier * height * 4),
+      colorSpace: "srgb",
     };
 
     const result = diffImageDatas(baselineImageData, candidateImageData, difxPng, options);
