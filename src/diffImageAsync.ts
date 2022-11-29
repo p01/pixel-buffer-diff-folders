@@ -38,6 +38,47 @@ const loadFileAndGetRGBAImageData = async (path: string): Promise<ImageData> => 
   return imageDataRGBA;
 };
 
+const matchImageDataDimensions = (ids: ImageData[]): ImageData[] => {
+  if (ids.length !== 2) {
+    throw new Error(`Received ${ids.length} ImageData instead of 2 in matchImageDataDimensions`) ;
+  }
+
+  const [bId, cId] = ids;
+  const bWidth = bId.width;
+  const bHeight = bId.height;
+  const cWidth = cId.width;
+  const cHeight = cId.height;
+  
+  if (bWidth === cWidth && bHeight === cHeight) {
+    return ids;
+  }
+  
+  const matchingImageDatas: ImageData[] = [];
+  const maxWidth = Math.max(bWidth, cWidth);
+  const maxHeight = Math.max(bHeight, cHeight);
+  for (const id of ids) {
+    const imageData = {
+      width: maxWidth,
+      height: maxHeight,
+      data: new Uint8ClampedArray(maxWidth * maxHeight * 4),
+      colorSpace: "srgb",
+    } as ImageData;
+    
+    let inputOffset = 0;
+    let outputOffset = 0;
+    const inputStrideLength = id.width * 4;
+    const outputStrideLength = maxWidth * 4;
+    for (let y = 0; y < maxHeight; y++) {
+      imageData.data.set(id.data.slice(inputOffset, inputOffset + inputStrideLength), outputOffset);
+      inputOffset += inputStrideLength;
+      outputOffset += outputStrideLength;
+    }
+    matchingImageDatas.push(imageData);
+  }
+  
+  return matchingImageDatas;
+};
+
 export const diffImage = async (data: DiffImageOptions): Promise<Changed | Error> => {
   const { baselineFolder, candidateFolder, diffFolder, options, sideBySide, path } = data;
   try {
@@ -45,10 +86,11 @@ export const diffImage = async (data: DiffImageOptions): Promise<Changed | Error
     const candidatePath = join(candidateFolder, path);
     const diffPath = join(diffFolder, path);
 
-    const [baselineImageData, candidateImageData] = await Promise.all([
+    const [baselineImageData, candidateImageData] = matchImageDataDimensions(
+      await Promise.all([
       loadFileAndGetRGBAImageData(baselinePath),
       loadFileAndGetRGBAImageData(candidatePath)
-    ]);
+    ]));
     
     const widthMultiplier = sideBySide ? 3 : 1;
     const { width, height } = baselineImageData;
