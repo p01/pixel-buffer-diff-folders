@@ -6,7 +6,7 @@ import { join } from "path";
   const candidateFolder = join("..", "images", "candidates");
   const diffFolder = join("..", "images", "diff");
 
-  const report = await diffFolders(baselineFolder, candidateFolder, diffFolder, { enableMinimap: true }, true);
+  const report = await diffFolders(baselineFolder, candidateFolder, diffFolder, { enableMinimap: true }, true, true);
 
   console.log(report);
 })();
